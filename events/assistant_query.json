@@ -1,0 +1,9 @@
+{
+  "body": "{\"trigger\":\"google_assistant\",\"query\":\"does my car need charging\"}",
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Webhook-Secret": "your-assistant-webhook-secret"
+  },
+  "httpMethod": "POST",
+  "path": "/assistant/query"
+}

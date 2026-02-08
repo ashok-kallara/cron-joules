@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Cron Joules – EV Charging Reminder System
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: python3.11
+    MemorySize: 256
+    Environment:
+      Variables:
+        DYNAMODB_TABLE: !Ref ConfigTable
+        LOG_LEVEL: INFO
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues:
+      - dev
+      - prod
+  
+  ScheduleTimezone:
+    Type: String
+    Default: America/Los_Angeles
+    Description: Timezone for scheduled checks
+
+Resources:
+  # DynamoDB Table for configuration
+  ConfigTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub cron-joules-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+
+  # Lambda Functions
+  CheckBatteryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub cj-check-battery-${Environment}
+      CodeUri: src/
+      Handler: handlers.check_battery.handler
+      Description: Scheduled battery check and reminder
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConfigTable
+        - SSMParameterReadPolicy:
+            ParameterName: cron-joules/*
+      Events:
+        Evening7PM:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0 19 * * ? *)
+            ScheduleExpressionTimezone: !Ref ScheduleTimezone
+            Description: Check battery at 7PM daily
+        Evening10PM:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0 22 * * ? *)
+            ScheduleExpressionTimezone: !Ref ScheduleTimezone
+            Description: Follow-up check at 10PM daily
+
+  TelegramWebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub cj-telegram-webhook-${Environment}
+      CodeUri: src/
+      Handler: handlers.telegram_webhook.handler
+      Description: Handle Telegram bot commands
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConfigTable
+        - SSMParameterReadPolicy:
+            ParameterName: cron-joules/*
+      # Events:
+      #   TelegramApi:
+      #     Type: Api
+      #     Properties:
+      #       Path: /telegram/webhook
+      #       Method: POST
+      #       RestApiId: !Ref ApiGateway
+
+  AssistantQueryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub cj-assistant-query-${Environment}
+      CodeUri: src/
+      Handler: handlers.assistant_query.handler
+      Description: Handle Google Assistant queries via IFTTT
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConfigTable
+        - SSMParameterReadPolicy:
+            ParameterName: cron-joules/*
+      # Events:
+      #   AssistantApi:
+      #     Type: Api
+      #     Properties:
+      #       Path: /assistant/query
+      #       Method: POST
+      #       RestApiId: !Ref ApiGateway
+
+  # API Gateway (disabled - no internet-facing endpoints)
+  # ApiGateway:
+  #   Type: AWS::Serverless::Api
+  #   Properties:
+  #     Name: !Sub cron-joules-api-${Environment}
+  #     StageName: !Ref Environment
+  #     Description: API for Cron Joules webhooks
+  #     MethodSettings:
+  #       - ResourcePath: "/*"
+  #         HttpMethod: "*"
+  #         ThrottlingRateLimit: 10
+  #         ThrottlingBurstLimit: 20
+
+Outputs:
+  # TelegramWebhookUrl:
+  #   Description: URL for Telegram webhook
+  #   Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/telegram/webhook
+
+  # AssistantQueryUrl:
+  #   Description: URL for IFTTT/Google Assistant webhook (include X-Webhook-Secret header)
+  #   Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/assistant/query
+
+  ConfigTableName:
+    Description: DynamoDB table name
+    Value: !Ref ConfigTable

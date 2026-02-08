@@ -1,0 +1,32 @@
+[project]
+name = "cron-joules"
+version = "0.1.0"
+description = "Cron Joules – EV charging reminder with Telegram notifications"
+requires-python = ">=3.11"
+dependencies = [
+    "hyundai-kia-connect-api>=3.32.0",
+    "boto3>=1.35.0",
+    "requests>=2.32.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.23.0",
+    "moto[dynamodb]>=5.0.0",
+    "responses>=0.25.0",
+    "python-dotenv>=1.0.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

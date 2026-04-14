@@ -1,11 +1,11 @@
 """Kia Connect API client wrapper."""
 
 import logging
-from dataclasses import dataclass
 
 from hyundai_kia_connect_api import Vehicle, VehicleManager
 from hyundai_kia_connect_api.const import BRANDS, REGIONS
 
+from services.vehicle_client import VehicleStatus
 from utils.secrets import get_kia_credentials
 
 logger = logging.getLogger(__name__)
@@ -13,22 +13,6 @@ logger = logging.getLogger(__name__)
 # Kia USA configuration
 REGION = REGIONS[3]  # USA
 BRAND = BRANDS[1]  # Kia
-
-
-@dataclass
-class VehicleStatus:
-    """Simplified vehicle status."""
-
-    battery_level: int
-    is_charging: bool
-    is_plugged_in: bool
-    estimated_range: int
-    last_updated: str | None = None
-
-    @property
-    def needs_charging(self) -> bool:
-        """Check if vehicle needs charging based on status."""
-        return not self.is_charging and not self.is_plugged_in
 
 
 class KiaClient:
@@ -103,7 +87,7 @@ class KiaClient:
         )
 
 
-# Module-level singleton for Lambda reuse
+# Module-level singleton for warm reuse
 _client: KiaClient | None = None
 
 
@@ -113,15 +97,3 @@ def get_kia_client() -> KiaClient:
     if _client is None:
         _client = KiaClient()
     return _client
-
-
-def get_vehicle_status(force_refresh: bool = False) -> VehicleStatus:
-    """Convenience function to get vehicle status.
-
-    Args:
-        force_refresh: If True, force refresh from vehicle
-
-    Returns:
-        VehicleStatus with battery and charging info
-    """
-    return get_kia_client().get_vehicle_status(force_refresh=force_refresh)

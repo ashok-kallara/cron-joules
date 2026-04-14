@@ -1,21 +1,13 @@
-"""Telegram webhook Lambda handler."""
+"""Telegram bot command processing."""
 
-import json
 import logging
-import os
 import re
 
 from services.config_service import get_config, set_battery_threshold, set_vacation_mode
-from services.kia_client import get_vehicle_status
-from services.telegram_client import get_telegram_client
-from utils.secrets import get_telegram_webhook_secret
+from services.vehicle_client import get_vehicle_name, get_vehicle_status
 
-# Configure logging
-log_level = os.environ.get("LOG_LEVEL", "INFO")
-logging.basicConfig(level=log_level)
 logger = logging.getLogger(__name__)
 
-# Command help text
 HELP_TEXT = """
 <b>Cron Joules Bot</b>
 
@@ -27,61 +19,6 @@ Available commands:
 • /config - Show current settings
 • /help - Show this message
 """
-
-
-def handler(event: dict, context) -> dict:
-    """Lambda handler for Telegram webhook.
-
-    Args:
-        event: API Gateway event with Telegram update
-        context: Lambda context
-
-    Returns:
-        API Gateway response
-    """
-    logger.info(f"Telegram webhook received: {event}")
-
-    try:
-        # Verify Telegram secret token
-        expected_secret = get_telegram_webhook_secret()
-        if expected_secret:
-            headers = event.get("headers") or {}
-            # API Gateway lowercases header names
-            incoming_secret = headers.get("X-Telegram-Bot-Api-Secret-Token") or headers.get(
-                "x-telegram-bot-api-secret-token"
-            )
-            if incoming_secret != expected_secret:
-                logger.warning("Telegram webhook request failed secret validation")
-                return _response(401, {"error": "Unauthorized"})
-
-        # Parse Telegram update
-        body = json.loads(event.get("body", "{}"))
-        message = body.get("message", {})
-
-        if not message:
-            logger.info("No message in update, skipping")
-            return _response(200, {"ok": True})
-
-        chat_id = str(message.get("chat", {}).get("id"))
-        text = message.get("text", "").strip()
-        message_id = message.get("message_id")
-
-        if not text or not text.startswith("/"):
-            logger.info("Not a command, skipping")
-            return _response(200, {"ok": True})
-
-        # Process command
-        response_text = process_command(text)
-
-        # Send response
-        client = get_telegram_client()
-        client.reply_to_message(response_text, chat_id, message_id)
-
-        return _response(200, {"ok": True})
-
-    except Exception as e:
-        logger.exception(f"Error processing webhook: {e}")
-        return _response(200, {"ok": True})  # Always return 200 to Telegram
 
 
 def process_command(text: str) -> str:
@@ -119,8 +56,9 @@ def handle_status() -> str:
         charging_status = "🔌 Charging" if status.is_charging else "⚡ Not charging"
         plugged_status = "Connected" if status.is_plugged_in else "Not connected"
 
+        vehicle_name = get_vehicle_name()
         return (
-            f"🚗 <b>EV6 Status</b>\n\n"
+            f"🚗 <b>{vehicle_name} Status</b>\n\n"
             f"🔋 Battery: {status.battery_level}%\n"
             f"📍 Range: ~{status.estimated_range} mi\n"
             f"{charging_status}\n"
@@ -184,12 +122,3 @@ def handle_config() -> str:
         f"🏖️ Vacation mode: {vacation_status}\n"
         f"📬 Reminder sent today: {'Yes' if config.reminder_sent_today else 'No'}"
     )
-
-
-def _response(status_code: int, body: dict) -> dict:
-    """Create API Gateway response."""
-    return {
-        "statusCode": status_code,
-        "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(body),
-    }

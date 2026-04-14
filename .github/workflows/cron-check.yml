@@ -1,0 +1,45 @@
+name: Battery Check
+
+on:
+  schedule:
+    # 4 triggers to handle DST transitions automatically.
+    # main.py checks the current ET hour at runtime and exits early
+    # if this is the "inactive" DST trigger for the current time of year.
+    - cron: '0 23 * * *'  # 7PM EDT  (UTC-4, Mar–Nov)
+    - cron: '0 0 * * *'   # 7PM EST  (UTC-5, Nov–Mar)
+    - cron: '0 2 * * *'   # 10PM EDT (UTC-4, Mar–Nov)
+    - cron: '0 3 * * *'   # 10PM EST (UTC-5, Nov–Mar)
+  workflow_dispatch:       # Allow manual trigger for testing
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: '3.11'
+          enable-cache: true
+
+      - name: Install runtime dependencies
+        run: uv sync --no-dev
+
+      - name: Run battery check
+        run: uv run python src/main.py check-battery
+        env:
+          # Vehicle provider — set VEHICLE_PROVIDER to "kia" or "tesla" in repo Variables
+          VEHICLE_PROVIDER: ${{ vars.VEHICLE_PROVIDER }}
+          VEHICLE_NAME: ${{ vars.VEHICLE_NAME }}
+          # Kia credentials (only needed when VEHICLE_PROVIDER=kia)
+          KIA_USERNAME: ${{ secrets.KIA_USERNAME }}
+          KIA_PASSWORD: ${{ secrets.KIA_PASSWORD }}
+          KIA_PIN: ${{ secrets.KIA_PIN }}
+          # Tesla credentials (only needed when VEHICLE_PROVIDER=tesla)
+          TESLA_EMAIL: ${{ secrets.TESLA_EMAIL }}
+          TESLA_VIN: ${{ secrets.TESLA_VIN }}
+          TESLA_REFRESH_TOKEN: ${{ secrets.TESLA_REFRESH_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}

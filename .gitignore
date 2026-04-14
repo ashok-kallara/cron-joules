@@ -28,7 +28,7 @@ htmlcov/
 .env.local
 .env.json
 
-# AWS SAM
+# AWS SAM (no longer used, ignore if regenerated)
 .aws-sam/
 samconfig.toml
 

@@ -1,72 +1,42 @@
 """Pytest fixtures and configuration."""
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import boto3
 import pytest
-from moto import mock_aws
 
-# Set test environment variables before importing modules
-os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
-os.environ["AWS_ACCESS_KEY_ID"] = "testing"
-os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
-os.environ["DYNAMODB_TABLE"] = "cron-joules-test"
-os.environ["LOG_LEVEL"] = "DEBUG"
+# Environment variables required by services
+os.environ.setdefault("UPSTASH_REDIS_REST_URL", "https://test.upstash.io")
+os.environ.setdefault("UPSTASH_REDIS_REST_TOKEN", "test-token")
+os.environ.setdefault("LOG_LEVEL", "DEBUG")
 
 
-@pytest.fixture
-def aws_credentials():
-    """Mock AWS credentials for moto."""
-    os.environ["AWS_ACCESS_KEY_ID"] = "testing"
-    os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
-    os.environ["AWS_SECURITY_TOKEN"] = "testing"
-    os.environ["AWS_SESSION_TOKEN"] = "testing"
-    os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
+@pytest.fixture(autouse=True)
+def kia_credentials(monkeypatch):
+    """Inject Kia Connect credentials as environment variables."""
+    monkeypatch.setenv("KIA_USERNAME", "test@example.com")
+    monkeypatch.setenv("KIA_PASSWORD", "testpassword")
+    monkeypatch.setenv("KIA_PIN", "1234")
 
 
-@pytest.fixture
-def dynamodb_table(aws_credentials):
-    """Create mock DynamoDB table."""
-    with mock_aws():
-        dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
-        table = dynamodb.create_table(
-            TableName="cron-joules-test",
-            KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
-            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}],
-            BillingMode="PAY_PER_REQUEST",
-        )
-        table.wait_until_exists()
-        yield table
+@pytest.fixture(autouse=True)
+def telegram_config(monkeypatch):
+    """Inject Telegram configuration as environment variables."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-1001234567890")
 
 
-@pytest.fixture
-def mock_kia_credentials():
-    """Mock Kia Connect credentials."""
-    with patch("utils.secrets.get_kia_credentials") as mock:
-        mock.return_value = {
-            "username": "test@example.com",
-            "password": "testpassword",
-            "pin": "1234",
-        }
-        yield mock
-
-
-@pytest.fixture
-def mock_telegram_config():
-    """Mock Telegram configuration."""
-    with patch("utils.secrets.get_telegram_config") as mock:
-        mock.return_value = {
-            "bot_token": "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
-            "chat_id": "-1001234567890",
-        }
-        yield mock
+@pytest.fixture(autouse=True)
+def vehicle_provider(monkeypatch):
+    """Set default vehicle provider env vars for tests."""
+    monkeypatch.setenv("VEHICLE_PROVIDER", "kia")
+    monkeypatch.setenv("VEHICLE_NAME", "EV6")
 
 
 @pytest.fixture
 def mock_vehicle_status():
-    """Mock vehicle status response."""
-    from services.kia_client import VehicleStatus
+    """Default mock VehicleStatus (low battery, not charging)."""
+    from services.vehicle_client import VehicleStatus
 
     return VehicleStatus(
         battery_level=40,
@@ -78,27 +48,14 @@ def mock_vehicle_status():
 
 
 @pytest.fixture
-def mock_kia_client(mock_vehicle_status):
-    """Mock KiaClient for testing."""
-    with patch("services.kia_client.get_vehicle_status") as mock:
-        mock.return_value = mock_vehicle_status
-        yield mock
-
-
-@pytest.fixture
 def mock_telegram_send():
-    """Mock Telegram send_message."""
-    with patch("services.telegram_client.send_message") as mock:
-        mock.return_value = {"ok": True, "result": {"message_id": 123}}
-        yield mock
+    """Mock telegram send_message to avoid real HTTP calls."""
+    from unittest.mock import patch
 
-
-@pytest.fixture
-def lambda_context():
-    """Create mock Lambda context."""
-    context = MagicMock()
-    context.function_name = "test-function"
-    context.memory_limit_in_mb = 256
-    context.invoked_function_arn = "arn:aws:lambda:us-east-1:123456789012:function:test"
-    context.aws_request_id = "test-request-id"
-    return context
+    with patch("services.telegram_client.requests") as mock_req:
+        mock_req.post.return_value.json.return_value = {
+            "ok": True,
+            "result": {"message_id": 123},
+        }
+        mock_req.post.return_value.raise_for_status = MagicMock()
+        yield mock_req

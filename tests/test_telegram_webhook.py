@@ -1,81 +1,61 @@
-"""Tests for telegram_webhook handler."""
+"""Tests for telegram_webhook command processing."""
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+import responses as responses_lib
 
-from services.kia_client import VehicleStatus
+from handlers.telegram_webhook import (
+    handle_config,
+    handle_status,
+    handle_threshold,
+    handle_vacation,
+    process_command,
+)
+from services.config_service import Config
+from services.vehicle_client import VehicleStatus
 
-VALID_WEBHOOK_SECRET = "test-webhook-secret-token"
+UPSTASH_URL = "https://test.upstash.io"
 
 
-class TestTelegramWebhookHandler:
-    """Tests for Telegram webhook handler."""
+class TestProcessCommand:
+    """Tests for the process_command dispatcher."""
 
-    def _make_event(self, text: str, chat_id: int = -1001234567890) -> dict:
-        """Create a mock Telegram webhook event."""
-        return {
-            "headers": {
-                "X-Telegram-Bot-Api-Secret-Token": VALID_WEBHOOK_SECRET,
-            },
-            "body": json.dumps({
-                "message": {
-                    "chat": {"id": chat_id},
-                    "text": text,
-                    "message_id": 123,
-                }
-            }),
-        }
+    def test_dispatches_status(self):
+        """Should call handle_status for /status."""
+        with patch("handlers.telegram_webhook.handle_status", return_value="status reply") as mock:
+            result = process_command("/status")
+        assert result == "status reply"
+        mock.assert_called_once()
 
-    def test_rejects_request_without_secret(self, lambda_context, mock_telegram_config):
-        """Should reject requests missing the secret token header."""
-        event = {
-            "headers": {},
-            "body": json.dumps({
-                "message": {
-                    "chat": {"id": -1001234567890},
-                    "text": "/status",
-                    "message_id": 123,
-                }
-            }),
-        }
+    def test_dispatches_help(self):
+        """Should return help text for /help."""
+        result = process_command("/help")
+        assert "Available commands" in result
 
-        with patch(
-            "handlers.telegram_webhook.get_telegram_webhook_secret",
-            return_value=VALID_WEBHOOK_SECRET,
-        ):
-            from handlers.telegram_webhook import handler
+    def test_dispatches_start(self):
+        """Should return help text for /start."""
+        result = process_command("/start")
+        assert "Available commands" in result
 
-            result = handler(event, lambda_context)
+    def test_unknown_command(self):
+        """Should return unknown-command message for unrecognised commands."""
+        result = process_command("/unknown")
+        assert "Unknown command" in result
+        assert "/help" in result
 
-        assert result["statusCode"] == 401
+    def test_command_is_case_insensitive(self):
+        """Should handle mixed-case commands."""
+        with patch("handlers.telegram_webhook.handle_status", return_value="ok") as mock:
+            process_command("/STATUS")
+        mock.assert_called_once()
 
-    def test_rejects_request_with_wrong_secret(self, lambda_context, mock_telegram_config):
-        """Should reject requests with an incorrect secret token."""
-        event = {
-            "headers": {"X-Telegram-Bot-Api-Secret-Token": "wrong-secret"},
-            "body": json.dumps({
-                "message": {
-                    "chat": {"id": -1001234567890},
-                    "text": "/status",
-                    "message_id": 123,
-                }
-            }),
-        }
 
-        with patch(
-            "handlers.telegram_webhook.get_telegram_webhook_secret",
-            return_value=VALID_WEBHOOK_SECRET,
-        ):
-            from handlers.telegram_webhook import handler
+class TestHandleStatus:
+    """Tests for /status command handler."""
 
-            result = handler(event, lambda_context)
-
-        assert result["statusCode"] == 401
-
-    def test_status_command(self, lambda_context, mock_telegram_config):
-        """Should return vehicle status for /status command."""
+    def test_returns_battery_info(self):
+        """Should include battery level and range in response."""
         mock_status = VehicleStatus(
             battery_level=65,
             is_charging=False,
@@ -84,192 +64,124 @@ class TestTelegramWebhookHandler:
             last_updated="2024-01-15 10:30:00",
         )
 
-        mock_client = MagicMock()
+        with patch("handlers.telegram_webhook.get_vehicle_status", return_value=mock_status):
+            result = handle_status()
 
-        with (
-            patch("handlers.telegram_webhook.get_vehicle_status", return_value=mock_status),
-            patch("handlers.telegram_webhook.get_telegram_client", return_value=mock_client),
-            patch(
-                "handlers.telegram_webhook.get_telegram_webhook_secret",
-                return_value=VALID_WEBHOOK_SECRET,
-            ),
-        ):
-            from handlers.telegram_webhook import handler
+        assert "65%" in result
+        assert "200" in result
+        assert "Not charging" in result
 
-            result = handler(self._make_event("/status"), lambda_context)
-
-        assert result["statusCode"] == 200
-        mock_client.reply_to_message.assert_called_once()
-        call_args = mock_client.reply_to_message.call_args
-        assert "65%" in call_args[0][0]  # Battery level in response
-
-    def test_vacation_on_command(self, lambda_context, dynamodb_table, mock_telegram_config):
-        """Should enable vacation mode for /vacation on command."""
-        mock_client = MagicMock()
-
-        with (
-            patch("services.config_service.get_dynamodb_table", return_value=dynamodb_table),
-            patch("handlers.telegram_webhook.get_telegram_client", return_value=mock_client),
-            patch(
-                "handlers.telegram_webhook.get_telegram_webhook_secret",
-                return_value=VALID_WEBHOOK_SECRET,
-            ),
-        ):
-            from handlers.telegram_webhook import handler
-            from services import config_service
-
-            config_service.get_dynamodb_table.cache_clear()
-
-            result = handler(self._make_event("/vacation on"), lambda_context)
-
-        assert result["statusCode"] == 200
-        mock_client.reply_to_message.assert_called_once()
-        call_args = mock_client.reply_to_message.call_args
-        assert "enabled" in call_args[0][0].lower()
-
-    def test_vacation_off_command(self, lambda_context, dynamodb_table, mock_telegram_config):
-        """Should disable vacation mode for /vacation off command."""
-        dynamodb_table.put_item(Item={"pk": "config", "vacation_mode": True})
-        mock_client = MagicMock()
-
-        with (
-            patch("services.config_service.get_dynamodb_table", return_value=dynamodb_table),
-            patch("handlers.telegram_webhook.get_telegram_client", return_value=mock_client),
-            patch(
-                "handlers.telegram_webhook.get_telegram_webhook_secret",
-                return_value=VALID_WEBHOOK_SECRET,
-            ),
-        ):
-            from handlers.telegram_webhook import handler
-            from services import config_service
-
-            config_service.get_dynamodb_table.cache_clear()
-
-            result = handler(self._make_event("/vacation off"), lambda_context)
-
-        assert result["statusCode"] == 200
-        call_args = mock_client.reply_to_message.call_args
-        assert "disabled" in call_args[0][0].lower()
-
-    def test_threshold_command(self, lambda_context, dynamodb_table, mock_telegram_config):
-        """Should set battery threshold for /threshold command."""
-        mock_client = MagicMock()
-
-        with (
-            patch("services.config_service.get_dynamodb_table", return_value=dynamodb_table),
-            patch("handlers.telegram_webhook.get_telegram_client", return_value=mock_client),
-            patch(
-                "handlers.telegram_webhook.get_telegram_webhook_secret",
-                return_value=VALID_WEBHOOK_SECRET,
-            ),
-        ):
-            from handlers.telegram_webhook import handler
-            from services import config_service
-
-            config_service.get_dynamodb_table.cache_clear()
-
-            result = handler(self._make_event("/threshold 50"), lambda_context)
-
-        assert result["statusCode"] == 200
-        call_args = mock_client.reply_to_message.call_args
-        assert "50%" in call_args[0][0]
-
-    def test_threshold_invalid_value(self, lambda_context, dynamodb_table, mock_telegram_config):
-        """Should reject invalid threshold values."""
-        mock_client = MagicMock()
-
-        with (
-            patch("services.config_service.get_dynamodb_table", return_value=dynamodb_table),
-            patch("handlers.telegram_webhook.get_telegram_client", return_value=mock_client),
-            patch(
-                "handlers.telegram_webhook.get_telegram_webhook_secret",
-                return_value=VALID_WEBHOOK_SECRET,
-            ),
-        ):
-            from handlers.telegram_webhook import handler
-            from services import config_service
-
-            config_service.get_dynamodb_table.cache_clear()
-
-            result = handler(self._make_event("/threshold 150"), lambda_context)
-
-        assert result["statusCode"] == 200
-        call_args = mock_client.reply_to_message.call_args
-        assert "between 0 and 100" in call_args[0][0]
-
-    def test_help_command(self, lambda_context, mock_telegram_config):
-        """Should return help text for /help command."""
-        mock_client = MagicMock()
-
-        with (
-            patch("handlers.telegram_webhook.get_telegram_client", return_value=mock_client),
-            patch(
-                "handlers.telegram_webhook.get_telegram_webhook_secret",
-                return_value=VALID_WEBHOOK_SECRET,
-            ),
-        ):
-            from handlers.telegram_webhook import handler
-
-            result = handler(self._make_event("/help"), lambda_context)
-
-        assert result["statusCode"] == 200
-        call_args = mock_client.reply_to_message.call_args
-        assert "Available commands" in call_args[0][0]
-
-    def test_config_command(self, lambda_context, dynamodb_table, mock_telegram_config):
-        """Should return current config for /config command."""
-        dynamodb_table.put_item(
-            Item={"pk": "config", "vacation_mode": False, "battery_threshold": 45}
+    def test_shows_charging_status(self):
+        """Should indicate charging when car is plugged in and charging."""
+        mock_status = VehicleStatus(
+            battery_level=80,
+            is_charging=True,
+            is_plugged_in=True,
+            estimated_range=240,
         )
-        mock_client = MagicMock()
 
-        with (
-            patch("services.config_service.get_dynamodb_table", return_value=dynamodb_table),
-            patch("handlers.telegram_webhook.get_telegram_client", return_value=mock_client),
-            patch(
-                "handlers.telegram_webhook.get_telegram_webhook_secret",
-                return_value=VALID_WEBHOOK_SECRET,
-            ),
-        ):
-            from handlers.telegram_webhook import handler
-            from services import config_service
+        with patch("handlers.telegram_webhook.get_vehicle_status", return_value=mock_status):
+            result = handle_status()
 
-            config_service.get_dynamodb_table.cache_clear()
+        assert "Charging" in result
 
-            result = handler(self._make_event("/config"), lambda_context)
-
-        assert result["statusCode"] == 200
-        call_args = mock_client.reply_to_message.call_args
-        assert "45%" in call_args[0][0]
-
-    def test_ignores_non_command_messages(self, lambda_context):
-        """Should ignore messages that aren't commands."""
+    def test_handles_api_error(self):
+        """Should return an error message when Kia API fails."""
         with patch(
-            "handlers.telegram_webhook.get_telegram_webhook_secret",
-            return_value=VALID_WEBHOOK_SECRET,
+            "handlers.telegram_webhook.get_vehicle_status",
+            side_effect=Exception("API error"),
         ):
-            from handlers.telegram_webhook import handler
+            result = handle_status()
 
-            result = handler(self._make_event("Hello, bot!"), lambda_context)
+        assert "Error" in result
 
-        assert result["statusCode"] == 200
 
-    def test_handles_empty_body(self, lambda_context):
-        """Should handle empty request body."""
-        with patch(
-            "handlers.telegram_webhook.get_telegram_webhook_secret",
-            return_value=VALID_WEBHOOK_SECRET,
-        ):
-            from handlers.telegram_webhook import handler
+class TestHandleVacation:
+    """Tests for /vacation command handler."""
 
-            result = handler(
-                {
-                    "headers": {
-                        "X-Telegram-Bot-Api-Secret-Token": VALID_WEBHOOK_SECRET,
-                    },
-                    "body": "{}",
-                },
-                lambda_context,
-            )
+    @responses_lib.activate
+    def test_shows_current_status_when_no_args(self):
+        """Should display current vacation mode when called with no arguments."""
+        responses_lib.add(
+            responses_lib.POST, UPSTASH_URL, json={"result": ["false", "45", "false"]}
+        )
 
-        assert result["statusCode"] == 200
+        result = handle_vacation([])
+
+        assert "currently" in result.lower()
+
+    @responses_lib.activate
+    def test_enables_vacation_mode(self):
+        """Should enable vacation mode for /vacation on."""
+        responses_lib.add(responses_lib.POST, UPSTASH_URL, json={"result": 0})
+
+        result = handle_vacation(["on"])
+
+        assert "enabled" in result.lower()
+
+    @responses_lib.activate
+    def test_disables_vacation_mode(self):
+        """Should disable vacation mode for /vacation off."""
+        responses_lib.add(responses_lib.POST, UPSTASH_URL, json={"result": 0})
+
+        result = handle_vacation(["off"])
+
+        assert "disabled" in result.lower()
+
+    def test_rejects_invalid_action(self):
+        """Should return error for unknown vacation subcommand."""
+        result = handle_vacation(["maybe"])
+
+        assert "Invalid" in result
+
+
+class TestHandleThreshold:
+    """Tests for /threshold command handler."""
+
+    @responses_lib.activate
+    def test_shows_current_threshold_when_no_args(self):
+        """Should display current threshold when called with no arguments."""
+        responses_lib.add(
+            responses_lib.POST, UPSTASH_URL, json={"result": ["false", "45", "false"]}
+        )
+
+        result = handle_threshold([])
+
+        assert "45%" in result
+
+    @responses_lib.activate
+    def test_sets_valid_threshold(self):
+        """Should update threshold for a valid value."""
+        responses_lib.add(responses_lib.POST, UPSTASH_URL, json={"result": 0})
+
+        result = handle_threshold(["60"])
+
+        assert "60%" in result
+
+    def test_rejects_out_of_range_threshold(self):
+        """Should reject threshold values outside 0-100."""
+        result = handle_threshold(["150"])
+
+        assert "between 0 and 100" in result
+
+    def test_rejects_non_numeric_threshold(self):
+        """Should reject non-numeric threshold input."""
+        result = handle_threshold(["abc"])
+
+        assert "Invalid" in result
+
+
+class TestHandleConfig:
+    """Tests for /config command handler."""
+
+    @responses_lib.activate
+    def test_returns_all_settings(self):
+        """Should display threshold, vacation mode, and reminder status."""
+        responses_lib.add(
+            responses_lib.POST, UPSTASH_URL, json={"result": ["false", "45", "false"]}
+        )
+
+        result = handle_config()
+
+        assert "45%" in result
+        assert "Disabled" in result  # vacation mode

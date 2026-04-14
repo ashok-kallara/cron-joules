@@ -1,8 +1,18 @@
-"""Tests for Kia client service."""
+"""Tests for Kia client service and config service."""
 
 import pytest
+import responses as responses_lib
 
-from services.kia_client import VehicleStatus
+from services.config_service import (
+    Config,
+    get_config,
+    set_battery_threshold,
+    set_reminder_sent,
+    set_vacation_mode,
+)
+from services.vehicle_client import VehicleStatus
+
+UPSTASH_URL = "https://test.upstash.io"
 
 
 class TestVehicleStatus:
@@ -38,7 +48,7 @@ class TestVehicleStatus:
         )
         assert status.needs_charging is False
 
-    def test_status_with_all_fields(self):
+    def test_status_stores_all_fields(self):
         """Should correctly store all status fields."""
         status = VehicleStatus(
             battery_level=75,
@@ -56,91 +66,105 @@ class TestVehicleStatus:
 
 
 class TestConfigService:
-    """Tests for config service."""
+    """Tests for config service (Upstash Redis-backed)."""
 
-    def test_get_config_default_values(self, dynamodb_table):
-        """Should return default values when no config exists."""
-        from unittest.mock import patch
+    @responses_lib.activate
+    def test_get_config_default_values(self):
+        """Should return defaults when Redis has no stored values."""
+        responses_lib.add(
+            responses_lib.POST,
+            UPSTASH_URL,
+            json={"result": [None, None, None]},
+        )
 
-        with patch("services.config_service.get_dynamodb_table", return_value=dynamodb_table):
-            from services.config_service import get_config
-            from services import config_service
-
-            config_service.get_dynamodb_table.cache_clear()
-
-            config = get_config()
+        config = get_config()
 
         assert config.vacation_mode is False
         assert config.battery_threshold == 45
         assert config.reminder_sent_today is False
 
-    def test_get_config_stored_values(self, dynamodb_table):
-        """Should return stored values when config exists."""
-        from unittest.mock import patch
-
-        dynamodb_table.put_item(
-            Item={
-                "pk": "config",
-                "vacation_mode": True,
-                "battery_threshold": 60,
-                "reminder_sent_today": True,
-            }
+    @responses_lib.activate
+    def test_get_config_stored_values(self):
+        """Should return stored values from Redis."""
+        responses_lib.add(
+            responses_lib.POST,
+            UPSTASH_URL,
+            json={"result": ["true", "60", "true"]},
         )
 
-        with patch("services.config_service.get_dynamodb_table", return_value=dynamodb_table):
-            from services.config_service import get_config
-            from services import config_service
-
-            config_service.get_dynamodb_table.cache_clear()
-
-            config = get_config()
+        config = get_config()
 
         assert config.vacation_mode is True
         assert config.battery_threshold == 60
         assert config.reminder_sent_today is True
 
-    def test_set_vacation_mode(self, dynamodb_table):
-        """Should update vacation mode in DynamoDB."""
-        from unittest.mock import patch
+    @responses_lib.activate
+    def test_get_config_falls_back_to_defaults_on_error(self):
+        """Should return default Config when Redis is unreachable."""
+        responses_lib.add(
+            responses_lib.POST,
+            UPSTASH_URL,
+            status=500,
+        )
 
-        with patch("services.config_service.get_dynamodb_table", return_value=dynamodb_table):
-            from services.config_service import set_vacation_mode, get_config
-            from services import config_service
+        config = get_config()
 
-            config_service.get_dynamodb_table.cache_clear()
+        assert config.vacation_mode is False
+        assert config.battery_threshold == 45
 
-            set_vacation_mode(True)
-            config = get_config()
+    @responses_lib.activate
+    def test_set_vacation_mode_true(self):
+        """Should send HSET vacation_mode=true to Redis."""
+        responses_lib.add(responses_lib.POST, UPSTASH_URL, json={"result": 1})
 
-        assert config.vacation_mode is True
+        set_vacation_mode(True)
 
-    def test_set_battery_threshold(self, dynamodb_table):
-        """Should update battery threshold in DynamoDB."""
-        from unittest.mock import patch
+        assert len(responses_lib.calls) == 1
+        import json
 
-        with patch("services.config_service.get_dynamodb_table", return_value=dynamodb_table):
-            from services.config_service import set_battery_threshold, get_config
-            from services import config_service
+        body = json.loads(responses_lib.calls[0].request.body)
+        assert body == ["HSET", "config", "vacation_mode", "true"]
 
-            config_service.get_dynamodb_table.cache_clear()
+    @responses_lib.activate
+    def test_set_vacation_mode_false(self):
+        """Should send HSET vacation_mode=false to Redis."""
+        responses_lib.add(responses_lib.POST, UPSTASH_URL, json={"result": 0})
 
-            set_battery_threshold(55)
-            config = get_config()
+        set_vacation_mode(False)
 
-        assert config.battery_threshold == 55
+        import json
 
-    def test_set_battery_threshold_invalid(self, dynamodb_table):
-        """Should reject invalid threshold values."""
-        from unittest.mock import patch
+        body = json.loads(responses_lib.calls[0].request.body)
+        assert body == ["HSET", "config", "vacation_mode", "false"]
 
-        with patch("services.config_service.get_dynamodb_table", return_value=dynamodb_table):
-            from services.config_service import set_battery_threshold
-            from services import config_service
+    @responses_lib.activate
+    def test_set_battery_threshold(self):
+        """Should send HSET battery_threshold to Redis."""
+        responses_lib.add(responses_lib.POST, UPSTASH_URL, json={"result": 0})
 
-            config_service.get_dynamodb_table.cache_clear()
+        set_battery_threshold(55)
 
-            with pytest.raises(ValueError):
-                set_battery_threshold(150)
+        import json
 
-            with pytest.raises(ValueError):
-                set_battery_threshold(-10)
+        body = json.loads(responses_lib.calls[0].request.body)
+        assert body == ["HSET", "config", "battery_threshold", "55"]
+
+    def test_set_battery_threshold_rejects_invalid_values(self):
+        """Should raise ValueError for out-of-range thresholds."""
+        with pytest.raises(ValueError):
+            set_battery_threshold(150)
+
+        with pytest.raises(ValueError):
+            set_battery_threshold(-10)
+
+    @responses_lib.activate
+    def test_set_reminder_sent(self):
+        """Should send HSET reminder_sent_today to Redis."""
+        responses_lib.add(responses_lib.POST, UPSTASH_URL, json={"result": 0})
+
+        set_reminder_sent(True)
+
+        import json
+
+        body = json.loads(responses_lib.calls[0].request.body)
+        assert body == ["HSET", "config", "reminder_sent_today", "true"]

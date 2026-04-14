@@ -1,45 +1,54 @@
 # Cron Joules
 
-A serverless reminder system for Kia EV6 that sends Telegram notifications when your car needs charging.
+A GitHub Actions-based reminder system for EVs that sends Telegram notifications when your car needs charging. Supports **Kia EV6** and **Tesla**.
+
+Runs entirely on GitHub Actions runners.
 
 ## Features
 
-- **Scheduled Checks**: Automatically checks battery at 7 PM and 10 PM daily
+- **Scheduled Checks**: Checks battery at 7 PM and 10 PM daily (America/New_York, DST-aware)
 - **Smart Reminders**: Only notifies when battery is below threshold AND charger is not connected
-- **Follow-up Alerts**: Sends a second reminder at 10 PM if car still isn't charging
-- **Telegram Bot Commands**:
-  - `/status` - Check current battery level
-  - `/vacation on/off` - Disable/enable reminders when away
-  - `/threshold <number>` - Set battery threshold (default: 45%)
-  - `/config` - View current settings
-- **Google Assistant** (optional): Ask "Does my car need charging?" via IFTTT integration
+- **Follow-up Alerts**: Sends a second reminder at 10 PM if car still isn't charging after the 7 PM alert
+- **Telegram Bot Commands** (responds within ~30 minutes via polling):
+  - `/status` — Check current battery level and range
+  - `/vacation on/off` — Disable/enable reminders when away
+  - `/threshold <number>` — Set battery alert threshold (default: 45%)
+  - `/config` — View current settings
+- **Google Assistant** (future): Ask "Does my car need charging?" via IFTTT
 
-## Architecture
+## How It Works
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  EventBridge    │────▶│  Lambda          │────▶│  Telegram       │
-│  (7PM & 10PM)   │     │  (check_battery) │     │  Bot API        │
-└─────────────────┘     └────────┬─────────┘     └─────────────────┘
-                                 │
-                                 ▼
-┌─────────────────┐     ┌──────────────────┐
-│  Kia Connect    │◀────│  DynamoDB        │
-│  API            │     │  (config)        │
-└─────────────────┘     └──────────────────┘
+GitHub Actions (cron)
+    │
+    ├── 7PM / 10PM ET ──▶ python src/main.py check-battery
+    │                          │
+    │                          ├── Reads config from Upstash Redis
+    │                          ├── Fetches battery status from Kia Connect API
+    │                          └── Sends Telegram message if needed
+    │
+    └── Every 30 min ──▶ python src/main.py poll-telegram
+                               │
+                               ├── Calls Telegram getUpdates API
+                               ├── Processes any pending bot commands
+                               └── Stores last update_id in Upstash Redis
 ```
+
+**Storage**: Upstash Redis (free tier) stores three config values — `vacation_mode`, `battery_threshold`, `reminder_sent_today` — and the Telegram poll offset.
+
+**Secrets**: Stored as GitHub Actions Secrets, injected as environment variables at runtime. Nothing is in the code.
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) - Python package manager
-- [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) — on macOS: `brew install aws-sam-cli`
-- AWS account with credentials configured
-- Kia Connect account (with EV6 registered)
-- Telegram account
+- [uv](https://docs.astral.sh/uv/) — Python package manager
+- A [GitHub](https://github.com) account (repo can be public or private)
+- **Kia**: A [Kia Connect](https://www.kia.com/us/en/kia-connect) account with your EV6 registered  
+  **Tesla**: A Tesla account (OAuth authentication via `scripts/tesla_auth.py`)
+- A Telegram account
 
 ## Setup
 
-### 1. Clone and Install Dependencies
+### 1. Clone and install dependencies
 
 ```bash
 git clone https://github.com/yourusername/cron-joules.git
@@ -47,265 +56,187 @@ cd cron-joules
 uv sync
 ```
 
-### 2. Install AWS SAM CLI
-
-Required for `make build` and `make deploy-guided`. On macOS:
-
-```bash
-brew install aws-sam-cli
-```
-
-Other platforms: see [Install the AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html).
-
-### 3. Create Telegram Bot
+### 2. Create a Telegram bot
 
 1. Open Telegram and message [@BotFather](https://t.me/BotFather)
 2. Send `/newbot` and follow the prompts
-3. Save the bot token (looks like `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
-4. Add the bot to your group or start a chat with it
-5. Get your chat ID using [@userinfobot](https://t.me/userinfobot)
+3. Save the **bot token** (looks like `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
+4. Start a chat with the bot or add it to a group
+5. Get your **chat ID** using [@userinfobot](https://t.me/userinfobot)
 
-### 4. Configure AWS credentials
+### 3. Create an Upstash Redis database
 
-Deploy and SSM commands need valid AWS credentials. Configure them first:
-
-```bash
-# Option A: Interactive (access key + secret from IAM)
-aws configure
-
-# Option B: AWS SSO
-aws sso login --profile your-profile
-export AWS_PROFILE=your-profile
-```
-
-Verify with: `aws sts get-caller-identity`
-
-### 5. Store Secrets in AWS SSM Parameter Store
+1. Sign up at [console.upstash.com](https://console.upstash.com) (free, no credit card required)
+2. Create a new Redis database — any region, Global type
+3. On the database page, copy:
+   - **REST URL** (looks like `https://xxx.upstash.io`)
+   - **REST Token**
+4. Initialise the config (run once from your terminal):
 
 ```bash
-# Kia Connect credentials
-aws ssm put-parameter --name "/cron-joules/kia/username" --value "your-email" --type SecureString
-aws ssm put-parameter --name "/cron-joules/kia/password" --value "your-password" --type SecureString
-aws ssm put-parameter --name "/cron-joules/kia/pin" --value "1234" --type SecureString
-
-# Telegram configuration
-aws ssm put-parameter --name "/cron-joules/telegram/bot_token" --value "your-bot-token" --type SecureString
-aws ssm put-parameter --name "/cron-joules/telegram/chat_id" --value "-1001234567890" --type String
-
-# Webhook security secrets
-aws ssm put-parameter --name "/cron-joules/telegram/webhook_secret" --value "$(openssl rand -hex 32)" --type SecureString
-aws ssm put-parameter --name "/cron-joules/assistant/webhook_secret" --value "$(openssl rand -hex 32)" --type SecureString
+curl -X POST "$UPSTASH_REDIS_REST_URL" \
+  -H "Authorization: Bearer $UPSTASH_REDIS_REST_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '["HSET", "config", "vacation_mode", "false", "battery_threshold", "45", "reminder_sent_today", "false"]'
 ```
 
-### 6. Deploy to AWS
+### 4. Add GitHub Actions Secrets and Variables
+
+In your repo: **Settings → Secrets and variables → Actions**
+
+**Secrets** (sensitive — never visible in logs):
+
+| Secret name | Where to find it |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | From @BotFather in step 2 |
+| `TELEGRAM_CHAT_ID` | From @userinfobot in step 2 |
+| `UPSTASH_REDIS_REST_URL` | From Upstash dashboard in step 3 |
+| `UPSTASH_REDIS_REST_TOKEN` | From Upstash dashboard in step 3 |
+| `KIA_USERNAME` | Kia Connect email _(Kia only)_ |
+| `KIA_PASSWORD` | Kia Connect password _(Kia only)_ |
+| `KIA_PIN` | Kia Connect PIN _(Kia only)_ |
+| `TESLA_EMAIL` | Your Tesla account email _(Tesla only)_ |
+| `TESLA_REFRESH_TOKEN` | Output of `scripts/tesla_auth.py` _(Tesla only)_ |
+| `TESLA_VIN` | Your car's VIN _(Tesla only, optional if only one vehicle)_ |
+
+**Variables** (non-sensitive, visible in logs — add under "Variables" tab):
+
+| Variable name | Value |
+|---|---|
+| `VEHICLE_PROVIDER` | `kia` or `tesla` |
+| `VEHICLE_NAME` | Display name in messages, e.g. `EV6` or `Model 3` (optional) |
+
+#### Tesla one-time authentication
+
+Before adding `TESLA_REFRESH_TOKEN`, run this locally once:
 
 ```bash
-# First time deployment (guided)
-make deploy-guided
-
-# Subsequent deployments
-make deploy
+TESLA_EMAIL=your@email.com uv run python scripts/tesla_auth.py
 ```
 
-### 7. Set Up Telegram Webhook
+This opens a browser for Tesla SSO login and prints your refresh token. Copy it to the GitHub Secret.
 
-After deployment, get the webhook URL from the CloudFormation outputs and register it with Telegram.
-Include the `secret_token` parameter so Telegram sends it in the `X-Telegram-Bot-Api-Secret-Token`
-header on every webhook request (must match the value you stored in SSM above):
+### 5. Push to main — you're live
 
-```bash
-# Get the webhook URL from deployment output
-WEBHOOK_URL="https://xxxxx.execute-api.us-east-1.amazonaws.com/prod/telegram/webhook"
+Once the secrets are set, push to the `main` branch. The workflows activate automatically.
 
-# Retrieve the secret you stored in SSM (or use the same value you generated)
-WEBHOOK_SECRET=$(aws ssm get-parameter --name "/cron-joules/telegram/webhook_secret" --with-decryption --query "Parameter.Value" --output text)
+**Test immediately** without waiting for the schedule: go to **Actions → Battery Check → Run workflow**.
 
-# Register webhook with Telegram (includes secret_token for request verification)
-curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=${WEBHOOK_URL}&secret_token=${WEBHOOK_SECRET}"
-```
+## Workflows
+
+| Workflow | Schedule | What it does |
+|---|---|---|
+| `cron-check.yml` | 7 PM & 10 PM ET daily | Checks battery, sends Telegram reminder if needed |
+| `telegram-poll.yml` | Every 30 minutes | Fetches pending bot commands and responds |
+| `ci.yml` | Every push / PR | Runs linting and tests |
+
+The battery check uses four UTC cron triggers (for 7 PM/10 PM × EDT/EST) to handle DST automatically. The script checks the current Eastern time at runtime and exits early if it's not actually 7 PM or 10 PM ET.
 
 ## Local Development
 
-### Run Tests
+### Run tests
 
 ```bash
-make test
+uv run pytest tests/ -v
 ```
 
-### Run Linting
+### Run with coverage
 
 ```bash
-make lint
+uv run pytest tests/ --cov=src --cov-report=term-missing
 ```
 
-### Format Code
+### Lint and format
 
 ```bash
-make format
+uv run ruff check src/ tests/
+uv run ruff format src/ tests/
 ```
 
-### Invoke Lambda Locally
+### Run locally against real APIs
+
+Create a `.env` file (this is git-ignored):
 
 ```bash
-# Create .env.json for local testing
-cp .env.example .env
-# Edit .env with your credentials, then create .env.json:
-cat > .env.json << 'EOF'
-{
-  "CheckBatteryFunction": {
-    "KIA_USERNAME": "your-email",
-    "KIA_PASSWORD": "your-password",
-    "KIA_PIN": "1234",
-    "TELEGRAM_BOT_TOKEN": "your-token",
-    "TELEGRAM_WEBHOOK_SECRET": "your-telegram-webhook-secret",
-    "TELEGRAM_CHAT_ID": "-1001234567890",
-    "DYNAMODB_TABLE": "cron-joules-dev"
-  }
-}
-EOF
-
-# Invoke the check battery function
-make invoke-local
+KIA_USERNAME=your-email@example.com
+KIA_PASSWORD=yourpassword
+KIA_PIN=1234
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF
+TELEGRAM_CHAT_ID=-1001234567890
+UPSTASH_REDIS_REST_URL=https://xxx.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your-token
 ```
 
-### Start Local API
+Then run:
 
 ```bash
-make local-api
-# Then test with: curl -X POST http://localhost:3000/telegram/webhook -d '...'
+# Load .env and run battery check
+uv run --env-file .env python src/main.py check-battery
+
+# Load .env and poll for Telegram commands
+uv run --env-file .env python src/main.py poll-telegram
 ```
 
-### Local end-to-end testing (including real Telegram)
+## Bot Commands
 
-You can test the full flow locally in two ways.
+Send these to your bot in Telegram. The bot responds on the next poll (within ~30 minutes):
 
-#### Option A: Invoke the Telegram webhook Lambda locally (real replies in Telegram)
-
-This runs the handler with a fake “Telegram update” event. The handler calls the real Kia API and sends a **real reply** to your Telegram chat.
-
-1. **Create `.env.json`** with credentials for local invocation (see “Invoke Lambda Locally” above). Use the same structure for `TelegramWebhookFunction`:
-
-   ```json
-   {
-     "TelegramWebhookFunction": {
-       "KIA_USERNAME": "your-email",
-       "KIA_PASSWORD": "your-password",
-       "KIA_PIN": "1234",
-       "TELEGRAM_BOT_TOKEN": "your-bot-token",
-       "TELEGRAM_WEBHOOK_SECRET": "your-telegram-webhook-secret",
-       "TELEGRAM_CHAT_ID": "-1001234567890",
-       "DYNAMODB_TABLE": "cron-joules-dev"
-     }
-   }
-   ```
-
-2. **Ensure the DynamoDB table exists** (e.g. deploy once with `make deploy-guided` or create the table in AWS). Local runs use `DYNAMODB_TABLE` and your default AWS credentials.
-
-3. **Invoke with a sample event** (the handler sends a real reply to the chat ID in the event):
-
-   ```bash
-   make invoke-telegram
-   ```
-
-   The reply goes to the `chat.id` in the event JSON. To receive it in your chat, edit `events/telegram_status.json` and set `"chat": {"id": YOUR_CHAT_ID, ...}` (same value as `TELEGRAM_CHAT_ID`).
-
-   To simulate other commands, invoke with a different event:
-
-   ```bash
-   sam local invoke TelegramWebhookFunction -e events/telegram_vacation_on.json --env-vars .env.json
-   ```
-
-   Or build your own event and pass it with `-e your_event.json`.
-
-#### Option B: Real Telegram → local API (full E2E with your phone/client)
-
-Telegram sends updates to your machine; your local API runs the handler and the bot replies in the same chat.
-
-1. **Create `.env.json`** as in Option A (include `TelegramWebhookFunction` with Kia, Telegram, and `DYNAMODB_TABLE`).
-
-2. **Start the local API:**
-
-   ```bash
-   make local-api
-   ```
-
-   Leave it running. By default the API is at `http://127.0.0.1:3000`.
-
-3. **Expose it with a tunnel** so Telegram can reach your machine (e.g. [ngrok](https://ngrok.com)):
-
-   ```bash
-   ngrok http 3000
-   ```
-
-   Note the HTTPS URL ngrok gives you (e.g. `https://abc123.ngrok.io`).
-
-4. **Set the Telegram webhook** to your tunnel URL:
-
-   ```bash
-   curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=https://YOUR_NGROK_URL/telegram/webhook"
-   ```
-
-   Example: if ngrok URL is `https://abc123.ngrok.io`:
-
-   ```bash
-   curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=https://abc123.ngrok.io/telegram/webhook"
-   ```
-
-5. **Send commands in Telegram** (to the bot in a group or DM). You should see the request in the terminal running `make local-api` and the bot’s reply in Telegram.
-
-6. **Unset the webhook when done** (so production or polling works as intended):
-
-   ```bash
-   curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/deleteWebhook"
-   ```
-
-## Google Assistant Integration (Optional)
-
-To enable "Hey Google, does my car need charging?":
-
-1. Create an [IFTTT](https://ifttt.com) account
-2. Create a new Applet:
-   - **Trigger**: Google Assistant V2 → "Activate scene"
-   - **Action**: Webhooks → Make a web request
-     - URL: Your Assistant Query URL (from deployment outputs)
-     - Method: POST
-     - Content Type: application/json
-     - Additional Headers: `X-Webhook-Secret: <your-assistant-webhook-secret>` (the value stored in SSM)
-3. In Google Home app, create a Routine:
-   - **Trigger**: "Does my car need charging?"
-   - **Action**: Adjust home devices → Adjust scene → Select your IFTTT scene
+| Command | Description |
+|---|---|
+| `/status` | Current battery %, estimated range, and charging state |
+| `/vacation on` | Disable all reminders (e.g. when away for the week) |
+| `/vacation off` | Re-enable reminders |
+| `/threshold 50` | Set alert threshold to 50% (accepts 0–100) |
+| `/config` | Show current threshold, vacation mode, and today's reminder status |
+| `/help` | Show available commands |
 
 ## Configuration
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Battery threshold | 45% | Send reminder if battery below this level |
-| Check times | 7 PM, 10 PM | When to check battery (configurable in template.yaml) |
-| Timezone | America/Los_Angeles | Timezone for scheduled checks |
+Config is stored in Upstash Redis and updated via bot commands. You can also set it directly:
+
+```bash
+# Disable reminders (vacation mode)
+curl -X POST "$UPSTASH_REDIS_REST_URL" \
+  -H "Authorization: Bearer $UPSTASH_REDIS_REST_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '["HSET", "config", "vacation_mode", "true"]'
+
+# Change battery threshold to 60%
+curl -X POST "$UPSTASH_REDIS_REST_URL" \
+  -H "Authorization: Bearer $UPSTASH_REDIS_REST_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '["HSET", "config", "battery_threshold", "60"]'
+```
 
 ## Troubleshooting
 
-### Check CloudWatch Logs
+**No reminder sent when battery is low**
+- Check the workflow run logs in the Actions tab
+- Verify your Kia Connect credentials are correct (`/status` command is a quick test)
+- Make sure `vacation_mode` isn't enabled (`/config`)
 
-```bash
-make logs
-```
+**Bot not responding to commands**
+- Commands are processed on the next poll (up to 30 minutes later)
+- Check the `telegram-poll` workflow run in the Actions tab for errors
+- Verify `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are correct
 
-### Common Issues
+**Workflow not running on schedule**
+- GitHub Actions cron can be delayed up to ~30 minutes during high load — this is normal
+- Scheduled workflows are automatically disabled if the repo has no activity for 60 days. Re-enable them in the Actions tab.
+- To trigger immediately, use **Actions → [workflow name] → Run workflow**
 
-1. **"No vehicles found"**: Make sure your EV6 is registered in the Kia Connect app
-2. **"Missing Kia Connect credentials"**: Verify SSM parameters are set correctly
-3. **Telegram not responding**: Check webhook is registered and bot has admin rights in group
+**"No vehicles found" error**
+- Make sure your EV6 is registered and visible in the Kia Connect mobile app
+- Kia Connect accounts occasionally require re-authentication — try logging out and back in to the app
 
-## Cost Estimate
+## Cost
 
-This solution runs entirely within AWS free tier:
-- Lambda: ~60 invocations/month (well under 1M free)
-- DynamoDB: ~100 read/write units/month (25 GB free)
-- EventBridge: 2 scheduled rules (free)
-- API Gateway: ~100 requests/month (1M free)
+| Service | Free tier | Usage |
+|---|---|---|
+| GitHub Actions | 2,000 min/month (private) or unlimited (public) | ~100–150 min/month |
+| Upstash Redis | 10,000 commands/day | ~100 commands/day |
 
-**Estimated monthly cost: $0**
+**Monthly cost: $0**
 
 ## License
 

@@ -1,6 +1,0 @@
-{
-  "headers": {
-    "X-Telegram-Bot-Api-Secret-Token": "your-telegram-webhook-secret"
-  },
-  "body": "{\"update_id\":123456790,\"message\":{\"message_id\":2,\"from\":{\"id\":123456789,\"is_bot\":false,\"first_name\":\"Test\",\"username\":\"testuser\"},\"chat\":{\"id\":-1001234567890,\"title\":\"EV Reminders\",\"type\":\"group\"},\"date\":1704067200,\"text\":\"/vacation on\"}}"
-}

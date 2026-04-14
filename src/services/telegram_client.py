@@ -94,8 +94,32 @@ class TelegramClient:
         response.raise_for_status()
         return response.json()
 
+    def get_updates(self, offset: int | None = None) -> list[dict]:
+        """Fetch pending updates via long-polling.
 
-# Module-level singleton
+        Args:
+            offset: Only return updates with update_id >= offset. Pass
+                    (last_update_id + 1) to acknowledge processed updates.
+
+        Returns:
+            List of update objects from Telegram
+        """
+        url = f"{self.api_url}/getUpdates"
+        params: dict = {"limit": 100}
+        if offset is not None:
+            params["offset"] = offset
+
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        result = response.json()
+
+        if not result.get("ok"):
+            raise RuntimeError(f"Telegram API error: {result.get('description')}")
+
+        return result.get("result", [])
+
+
+# Module-level singleton for warm reuse
 _client: TelegramClient | None = None
 
 
@@ -120,28 +144,50 @@ def send_message(text: str, chat_id: str | None = None) -> dict:
     return get_telegram_client().send_message(text, chat_id=chat_id)
 
 
-def send_reminder(battery_level: int, is_followup: bool = False) -> dict:
+def send_reminder(
+    battery_level: int,
+    is_followup: bool = False,
+    vehicle_name: str | None = None,
+) -> dict:
     """Send a charging reminder message.
 
     Args:
         battery_level: Current battery percentage
         is_followup: Whether this is a follow-up reminder
+        vehicle_name: Vehicle display name (defaults to VEHICLE_NAME env var)
 
     Returns:
         Telegram API response
     """
+    if vehicle_name is None:
+        from services.vehicle_client import get_vehicle_name
+
+        vehicle_name = get_vehicle_name()
+
     if is_followup:
         text = (
-            f"⚠️ <b>REMINDER:</b> EV6 still not charging!\n\n"
+            f"⚠️ <b>REMINDER:</b> {vehicle_name} still not charging!\n\n"
             f"🔋 Battery: {battery_level}%\n"
             f"Please plug in the charger."
         )
     else:
         text = (
-            f"🔋 <b>EV6 Battery Low</b>\n\n"
+            f"🔋 <b>{vehicle_name} Battery Low</b>\n\n"
             f"Battery: {battery_level}%\n"
             f"Charger not connected.\n\n"
             f"Please plug in to charge."
         )
 
     return send_message(text)
+
+
+def get_updates(offset: int | None = None) -> list[dict]:
+    """Convenience function to get pending Telegram updates.
+
+    Args:
+        offset: Only return updates with update_id >= offset
+
+    Returns:
+        List of update objects
+    """
+    return get_telegram_client().get_updates(offset=offset)

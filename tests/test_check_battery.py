@@ -2,8 +2,6 @@
 
 from unittest.mock import patch
 
-import pytest
-
 from handlers.check_battery import run_battery_check
 from services.config_service import Config
 from services.vehicle_client import VehicleStatus

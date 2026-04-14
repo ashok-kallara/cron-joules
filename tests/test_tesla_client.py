@@ -7,7 +7,6 @@ import pytest
 
 from services.tesla_client import TeslaClient, _make_cache_dumper, _make_cache_loader
 
-
 FAKE_EMAIL = "test@example.com"
 FAKE_TOKEN = {
     FAKE_EMAIL: {

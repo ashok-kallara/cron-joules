@@ -1,7 +1,6 @@
 """Telegram bot command processing."""
 
 import logging
-import re
 
 from services.config_service import get_config, set_battery_threshold, set_vacation_mode
 from services.vehicle_client import get_vehicle_name, get_vehicle_status

@@ -4,7 +4,6 @@ import pytest
 import responses as responses_lib
 
 from services.config_service import (
-    Config,
     get_config,
     set_battery_threshold,
     set_reminder_sent,

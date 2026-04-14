@@ -95,7 +95,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Cron Joules – EV charging reminder")
     subparsers = parser.add_subparsers(dest="command", required=True)
     check_parser = subparsers.add_parser("check-battery", help="Run the scheduled battery check")
-    check_parser.add_argument("--force", action="store_true", help="Bypass the time-of-day schedule gate")
+    check_parser.add_argument(
+        "--force", action="store_true", help="Bypass the time-of-day schedule gate"
+    )
     subparsers.add_parser("poll-telegram", help="Poll and respond to pending Telegram commands")
 
     args = parser.parse_args()

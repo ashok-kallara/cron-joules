@@ -110,10 +110,7 @@ class TeslaClient:
             timestamp = drive.get("gps_as_of") or charge.get("timestamp")
             last_updated = str(timestamp) if timestamp else None
 
-            logger.info(
-                f"Tesla status: battery={battery_level}%, "
-                f"charging_state={charging_state}"
-            )
+            logger.info(f"Tesla status: battery={battery_level}%, charging_state={charging_state}")
 
             return VehicleStatus(
                 battery_level=battery_level,

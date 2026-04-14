@@ -3,8 +3,8 @@
 import logging
 
 from services.config_service import get_config, set_reminder_sent
-from services.vehicle_client import get_vehicle_status
 from services.telegram_client import send_reminder
+from services.vehicle_client import get_vehicle_status
 
 logger = logging.getLogger(__name__)
 

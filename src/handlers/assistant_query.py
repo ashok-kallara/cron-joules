@@ -17,9 +17,7 @@ def run_assistant_query() -> dict:
     """
     status = get_vehicle_status()
     vehicle_name = get_vehicle_name()
-    logger.info(
-        f"Vehicle status: battery={status.battery_level}%, charging={status.is_charging}"
-    )
+    logger.info(f"Vehicle status: battery={status.battery_level}%, charging={status.is_charging}")
 
     if status.is_charging:
         speech = (
@@ -38,8 +36,7 @@ def run_assistant_query() -> dict:
         )
     else:
         speech = (
-            f"Your {vehicle_name} is at {status.battery_level} percent. "
-            f"No charging needed yet."
+            f"Your {vehicle_name} is at {status.battery_level} percent. No charging needed yet."
         )
 
     return {

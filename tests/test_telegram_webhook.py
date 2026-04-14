@@ -1,8 +1,7 @@
 """Tests for telegram_webhook command processing."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 import responses as responses_lib
 
 from handlers.telegram_webhook import (
@@ -12,7 +11,6 @@ from handlers.telegram_webhook import (
     handle_vacation,
     process_command,
 )
-from services.config_service import Config
 from services.vehicle_client import VehicleStatus
 
 UPSTASH_URL = "https://test.upstash.io"

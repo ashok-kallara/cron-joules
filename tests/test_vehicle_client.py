@@ -2,9 +2,12 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from services.vehicle_client import VehicleStatus, get_vehicle_name, get_vehicle_provider, get_vehicle_status
+from services.vehicle_client import (
+    VehicleStatus,
+    get_vehicle_name,
+    get_vehicle_provider,
+    get_vehicle_status,
+)
 
 
 class TestGetVehicleProvider:

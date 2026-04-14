@@ -9,22 +9,23 @@ from services.telegram_client import send_reminder
 logger = logging.getLogger(__name__)
 
 
-def run_battery_check(is_followup: bool = False) -> dict:
+def run_battery_check(is_followup: bool = False, force: bool = False) -> dict:
     """Run a battery check and send a reminder if needed.
 
     Args:
         is_followup: True if this is the 10PM follow-up check, False for 7PM
+        force: If True, bypass vacation mode and follow-up guards (for manual runs)
 
     Returns:
         Result dict with status and details
     """
     config = get_config()
 
-    if config.vacation_mode:
+    if config.vacation_mode and not force:
         logger.info("Vacation mode enabled, skipping check")
         return {"status": "skipped", "reason": "vacation_mode"}
 
-    if is_followup and not config.reminder_sent_today:
+    if is_followup and not config.reminder_sent_today and not force:
         logger.info("No initial reminder sent today, skipping follow-up")
         return {"status": "skipped", "reason": "no_initial_reminder"}
 

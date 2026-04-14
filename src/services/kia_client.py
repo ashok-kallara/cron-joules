@@ -41,11 +41,13 @@ class KiaClient:
         return self._manager
 
     def _get_vehicle(self) -> Vehicle:
-        """Get the first vehicle from the account."""
+        """Get the first vehicle from the account.
+
+        Note: caller is responsible for calling update_all_vehicles_with_cached_state()
+        or force_refresh_all_vehicles_states() before this method.
+        """
         if self._vehicle is None:
             manager = self._get_manager()
-            manager.check_and_refresh_token()
-            manager.update_all_vehicles_with_cached_state()
 
             if not manager.vehicles:
                 raise ValueError("No vehicles found in Kia Connect account")
@@ -69,17 +71,42 @@ class KiaClient:
         manager.check_and_refresh_token()
 
         if force_refresh:
-            # Force refresh from vehicle (takes ~30s, uses API quota)
             logger.info("Force refreshing vehicle status from car")
             manager.force_refresh_all_vehicles_states()
         else:
-            # Use cached data from Kia servers
             manager.update_all_vehicles_with_cached_state()
 
+        # Reset cached vehicle reference so we pick up freshly populated data
+        self._vehicle = None
         vehicle = self._get_vehicle()
 
+        # USA Kia EV6: cached state omits evStatus — ev_battery_percentage stays None.
+        # Automatically fall back to a force refresh to get real EV data.
+        if vehicle.ev_battery_percentage is None and not force_refresh:
+            logger.info(
+                "Cached state missing EV battery data (USA EV6 limitation); "
+                "falling back to force refresh"
+            )
+            manager.force_refresh_all_vehicles_states()
+            self._vehicle = None
+            vehicle = self._get_vehicle()
+
+        logger.debug(
+            f"Vehicle data: battery={vehicle.ev_battery_percentage!r}, "
+            f"charging={vehicle.ev_battery_is_charging!r}, "
+            f"plugged_in={vehicle.ev_battery_is_plugged_in!r}, "
+            f"range={vehicle.ev_driving_range!r}, "
+            f"last_updated={vehicle.last_updated_at!r}"
+        )
+
+        if vehicle.ev_battery_percentage is None:
+            raise ValueError(
+                "Kia API returned no battery data after force refresh — "
+                "check Kia Connect app and credentials"
+            )
+
         return VehicleStatus(
-            battery_level=vehicle.ev_battery_percentage or 0,
+            battery_level=vehicle.ev_battery_percentage,
             is_charging=vehicle.ev_battery_is_charging or False,
             is_plugged_in=vehicle.ev_battery_is_plugged_in or False,
             estimated_range=vehicle.ev_driving_range or 0,

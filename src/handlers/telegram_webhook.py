@@ -51,7 +51,7 @@ def process_command(text: str) -> str:
 def handle_status() -> str:
     """Handle /status command."""
     try:
-        status = get_vehicle_status()
+        status = get_vehicle_status(force_refresh=True)
 
         charging_status = "🔌 Charging" if status.is_charging else "⚡ Not charging"
         plugged_status = "Connected" if status.is_plugged_in else "Not connected"

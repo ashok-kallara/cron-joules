@@ -20,7 +20,7 @@ ET = ZoneInfo("America/New_York")
 CHECK_HOURS = {19: False, 22: True}  # hour -> is_followup
 
 
-def cmd_check_battery() -> None:
+def cmd_check_battery(force: bool = False) -> None:
     """Determine the check type from current ET time and run the battery check."""
     from handlers.check_battery import run_battery_check
 
@@ -30,18 +30,20 @@ def cmd_check_battery() -> None:
     logger.info(f"Current time ET: {now_et.strftime('%Y-%m-%d %H:%M %Z')} (hour={current_hour})")
 
     if current_hour not in CHECK_HOURS:
-        # The 4-trigger cron fires at both EST and EDT UTC offsets to cover DST.
-        # When the "wrong" offset trigger fires, skip gracefully.
-        logger.info(
-            f"Hour {current_hour} ET is not a check time (expected 19 or 22); "
-            "skipping — this is the inactive DST trigger"
-        )
-        return
+        if not force:
+            # The 4-trigger cron fires at both EST and EDT UTC offsets to cover DST.
+            # When the "wrong" offset trigger fires, skip gracefully.
+            logger.info(
+                f"Hour {current_hour} ET is not a check time (expected 19 or 22); "
+                "skipping — this is the inactive DST trigger"
+            )
+            return
+        logger.info("--force flag set; bypassing schedule gate")
 
-    is_followup = CHECK_HOURS[current_hour]
+    is_followup = CHECK_HOURS.get(current_hour, False)
     logger.info(f"Running {'10PM follow-up' if is_followup else '7PM'} battery check")
 
-    result = run_battery_check(is_followup=is_followup)
+    result = run_battery_check(is_followup=is_followup, force=force)
     logger.info(f"Battery check result: {result}")
 
     if result["status"] == "error":
@@ -92,13 +94,14 @@ def cmd_poll_telegram() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Cron Joules – EV charging reminder")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("check-battery", help="Run the scheduled battery check")
+    check_parser = subparsers.add_parser("check-battery", help="Run the scheduled battery check")
+    check_parser.add_argument("--force", action="store_true", help="Bypass the time-of-day schedule gate")
     subparsers.add_parser("poll-telegram", help="Poll and respond to pending Telegram commands")
 
     args = parser.parse_args()
 
     if args.command == "check-battery":
-        cmd_check_battery()
+        cmd_check_battery(force=getattr(args, "force", False))
     elif args.command == "poll-telegram":
         cmd_poll_telegram()
 

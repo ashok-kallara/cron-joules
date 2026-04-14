@@ -3,7 +3,16 @@
     "allow": [
       "Bash(uv sync:*)",
       "Bash(uv run:*)",
-      "Bash(uv --version)"
+      "Bash(uv --version)",
+      "WebSearch",
+      "mcp__plugin_everything-claude-code_github__search_code",
+      "mcp__plugin_everything-claude-code_github__search_issues",
+      "mcp__plugin_everything-claude-code_github__get_file_contents",
+      "WebFetch(domain:github.com)",
+      "Bash(uv pip:*)",
+      "Bash(pip index:*)",
+      "Bash(curl -s https://pypi.org/pypi/hyundai-kia-connect-api/json)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); versions=list\\(d['releases'].keys\\(\\)\\); versions.sort\\(\\); print\\(versions[-5:]\\)\")"
     ]
   }
 }

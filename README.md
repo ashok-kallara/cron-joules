@@ -170,12 +170,17 @@ UPSTASH_REDIS_REST_TOKEN=your-token
 Then run:
 
 ```bash
-# Load .env and run battery check
+# Load .env and run battery check (respects the 7PM/10PM ET schedule gate)
 uv run --env-file .env python src/main.py check-battery
+
+# Bypass the schedule gate — useful for testing at any time of day
+uv run --env-file .env python src/main.py check-battery --force
 
 # Load .env and poll for Telegram commands
 uv run --env-file .env python src/main.py poll-telegram
 ```
+
+`--force` bypasses the time-of-day check, vacation mode guard, and follow-up guard. It still fetches live vehicle status and sends a Telegram reminder if the battery is below threshold.
 
 ## Bot Commands
 

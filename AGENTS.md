@@ -8,7 +8,7 @@ Cron Joules is a personal EV charging reminder system that supports **Kia EV6** 
 src/
 ├── main.py                   # CLI entry point: check-battery | poll-telegram
 ├── handlers/
-│   ├── check_battery.py      # run_battery_check(is_followup) — core battery logic
+│   ├── check_battery.py      # run_battery_check(is_followup, force) — core battery logic
 │   ├── telegram_webhook.py   # process_command() and handle_* functions — bot commands
 │   └── assistant_query.py    # run_assistant_query() — Google Assistant / IFTTT (future)
 ├── services/
@@ -53,7 +53,7 @@ pyproject.toml                # uv project config, pytest settings, ruff config
 
 **Telegram bot**: Runs in polling mode (not webhook). `poll-telegram` workflow calls `getUpdates` every 30 minutes, processes any pending commands, stores the last `update_id` in Redis to avoid reprocessing.
 
-**DST handling**: `cron-check.yml` schedules 4 UTC cron times (7PM EDT + EST, 10PM EDT + EST). `main.py` checks `datetime.now(ZoneInfo("America/New_York")).hour` at runtime and exits early if the current ET hour isn't 19 or 22 — so the "wrong" DST trigger fires harmlessly.
+**DST handling**: `cron-check.yml` schedules 4 UTC cron times (7PM EDT + EST, 10PM EDT + EST). `main.py` checks `datetime.now(ZoneInfo("America/New_York")).hour` at runtime and exits early if the current ET hour isn't 19 or 22 — so the "wrong" DST trigger fires harmlessly. Pass `--force` to `check-battery` to bypass this gate for manual/debugging runs.
 
 ## Development Commands
 
@@ -75,7 +75,8 @@ uv run ruff format src/ tests/
 
 # Test locally with a .env file
 # Create .env with all required env vars, then:
-uv run --env-file .env python src/main.py check-battery
+uv run --env-file .env python src/main.py check-battery           # respects schedule gate
+uv run --env-file .env python src/main.py check-battery --force   # bypass schedule gate
 uv run --env-file .env python src/main.py poll-telegram
 ```
 
